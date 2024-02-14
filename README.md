@@ -1,4 +1,4 @@
-# sims4modmanager
+# sims4modorganizer
 
 A simple mod manager for Sims 4 mods, written in Rust. Tested on macOS.
 
@@ -11,14 +11,14 @@ This is designed more around managing mods from web sources without an elegant u
 ### Installing
 
 ```bash
-git clone https://github.com/subtervisor/sims4modmanager
-cd sims4modmanager
+git clone https://github.com/subtervisor/sims4modorganizer
+cd sims4modorganizer
 cargo install --path .
 ```
 
 ### Usage
 
-To get started, you want to initialize the database with `sims4modmanager initialize`. This will create an empty database for use. You can also use the `-f`/`--force` paramater to delete an existing database if it's corrupted or you want to start fresh.
+To get started, you want to initialize the database with `sims4modorganizer initialize`. This will create an empty database for use. You can also use the `-f`/`--force` paramater to delete an existing database if it's corrupted or you want to start fresh.
 
 The intended flow is one where you add mods to the mod folder with each in its own dedicated subdirectory. Packages and script files should all be one level deep in the mod folder. Each mod folder is considered a separate mod for tracking purposes. The `mod_data` folder is ignored, as this is shared between mods.
 
