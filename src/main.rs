@@ -58,6 +58,10 @@ pub enum Command {
         /// Deletes a given tag. Does not delete any mods.
         #[arg(short, long)]
         delete: Option<String>,
+
+        /// Only show given tags
+        #[arg(short, long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
     },
     /// Edit mod information and tags
     Edit {
@@ -113,7 +117,13 @@ async fn main() -> Result<()> {
             }
             commands::scan(verify, fix, sync_hashes).await
         }
-        Command::Tags { delete } => commands::tags(delete).await,
+        Command::Tags { delete, tags } => {
+            if delete.is_some() && tags.is_some() {
+                eprintln!("Delete and show tag options are mutually exclusive.");
+                std::process::exit(1);
+            }
+            commands::tags(delete, tags).await
+        }
         Command::Edit {
             interactive,
             mod_id,

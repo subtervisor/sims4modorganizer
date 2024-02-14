@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::entities::{prelude::*, *};
 
-pub async fn tags(delete: Option<String>) -> crate::Result<()> {
+pub async fn tags(delete: Option<String>, tags: Option<Vec<String>>) -> crate::Result<()> {
     let db = crate::util::open_database().await?;
 
     if let Some(to_delete) = delete {
@@ -22,8 +22,17 @@ pub async fn tags(delete: Option<String>) -> crate::Result<()> {
         }
     }
 
-    let tags_and_mods: Vec<(tag::Model, Vec<sims_mod::Model>)> =
-        Tag::find().find_with_related(SimsMod).all(&db).await?;
+    let tags_and_mods: Vec<(tag::Model, Vec<sims_mod::Model>)> = if let Some(mut tags) = tags {
+        Tag::find().filter(
+            tags.drain(..)
+                .fold(Condition::any(), |c, t| c.add(tag::Column::Tag.eq(t))),
+        )
+    } else {
+        Tag::find()
+    }
+    .find_with_related(SimsMod)
+    .all(&db)
+    .await?;
 
     for (tag, mods) in tags_and_mods.iter() {
         let title_corner = boxy::Char::upper_left(boxy::Weight::Thick);
