@@ -235,11 +235,7 @@ pub async fn edit(
                                 let mut active_model = mod_model.clone().into_active_model();
                                 db.transaction::<_, (), DbErr>(|txn| {
                                     Box::pin(async move {
-                                        let relation_model = mod_tag_relation::ActiveModel {
-                                            mod_id: ActiveValue::set(mod_model.id),
-                                            tag_id: ActiveValue::set(tag_id),
-                                        };
-                                        relation_model.delete(txn).await?;
+                                        mod_tag_relation::Entity::delete_by_id((mod_model.id, tag_id)).exec(txn).await?;
                                         active_model.updated =
                                             ActiveValue::set(chrono::offset::Local::now());
                                         active_model.save(txn).await?;

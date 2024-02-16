@@ -284,7 +284,7 @@ where
         .await?
         .drain(..)
         .unique()
-        .fold::<Condition, _>(Condition::any(), |c, i| c.add(tag::Column::Id.ne(i)));
+        .fold::<Condition, _>(Condition::all(), |c, i| c.add(tag::Column::Id.ne(i)));
     let result = Tag::delete_many().filter(unused_tags_cond).exec(db).await?;
     debug!("Deleted {} tags", result.rows_affected);
     Ok(())
