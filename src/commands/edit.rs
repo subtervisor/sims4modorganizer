@@ -104,9 +104,14 @@ pub async fn edit(
                         .drain(..)
                         .map(|(tag_name, tag_id)| EditMenuAction::TagModList(tag_name, tag_id))
                         .collect();
-                    current_state = Select::new("Mods by tag:", menu_entries)
-                        .prompt()
-                        .with_interrupted_default(EditMenuAction::MainMenu)?;
+                    if menu_entries.is_empty() {
+                        eprintln!("No tags found!");
+                        current_state = EditMenuAction::MainMenu;
+                    } else {
+                        current_state = Select::new("Mods by tag:", menu_entries)
+                            .prompt()
+                            .with_interrupted_default(EditMenuAction::MainMenu)?;
+                    }
                 }
                 EditMenuAction::TagModList(tag_name, tag_id) => {
                     let (_, mut tag_mods) = Tag::find_by_id(tag_id)
