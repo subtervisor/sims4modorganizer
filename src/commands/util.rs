@@ -1,7 +1,10 @@
 use crate::entities::{prelude::*, *};
 use crate::Result as CrateResult;
+use inquire::autocompletion::Replacement;
 use inquire::error::InquireResult;
+use inquire::CustomUserError;
 use itertools::Itertools;
+use radix_trie::TrieCommon;
 use sea_orm::{prelude::*, *};
 use std::{
     collections::{HashMap, HashSet},
@@ -288,4 +291,52 @@ where
     let result = Tag::delete_many().filter(unused_tags_cond).exec(db).await?;
     debug!("Deleted {} tags", result.rows_affected);
     Ok(())
+}
+
+#[derive(Clone)]
+pub struct TagAutoComplete {
+    pub tag_trie: radix_trie::Trie<String, ()>,
+}
+
+impl TagAutoComplete {
+    pub async fn create<C>(db: &C) -> Result<TagAutoComplete, DbErr>
+    where
+        C: sea_orm::ConnectionTrait,
+    {
+        return Ok(TagAutoComplete {
+            tag_trie: Tag::find()
+                .all(db)
+                .await?
+                .drain(..)
+                .map(|m| (m.tag, ()))
+                .collect::<radix_trie::Trie<String, ()>>(),
+        });
+    }
+}
+
+impl inquire::Autocomplete for TagAutoComplete {
+    // Required methods
+    fn get_suggestions(&mut self, input: &str) -> Result<Vec<String>, CustomUserError> {
+        if let Some(suggestions) = self.tag_trie.subtrie(input) {
+            return Ok(suggestions.keys().map(|k| k.clone()).collect());
+        }
+        Ok(vec![])
+    }
+
+    fn get_completion(
+        &mut self,
+        input: &str,
+        highlighted_suggestion: Option<String>,
+    ) -> Result<Replacement, CustomUserError> {
+        if highlighted_suggestion.is_some() {
+            Ok(highlighted_suggestion)
+        } else {
+            let suggestions = self.get_suggestions(input)?;
+            if !suggestions.is_empty() {
+                Ok(suggestions.first().map(|s| s.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }

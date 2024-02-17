@@ -1,5 +1,8 @@
+use std::collections::HashSet;
+use std::fmt::Debug;
+
 use inquire::error::InquireResult;
-use inquire::{Confirm, InquireError, Select, Text};
+use inquire::{Confirm, InquireError, MultiSelect, Select, Text};
 use sea_orm::{prelude::*, ActiveValue, Condition, IntoActiveModel, QuerySelect, TransactionTrait};
 use tracing_unwrap::OptionExt;
 
@@ -19,7 +22,19 @@ enum EditMenuAction {
     EditModTags(SimsModModel),
     AddTag(SimsModModel),
     DeleteTag(SimsModModel, String, i32),
+    BulkTag,
     Quit,
+}
+
+struct BulkTagSelection<'a> {
+    name: &'a str,
+    id: i32,
+}
+
+impl std::fmt::Display for BulkTagSelection<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} ({})", self.name, self.id)
+    }
 }
 
 impl std::fmt::Display for EditMenuAction {
@@ -39,6 +54,7 @@ impl std::fmt::Display for EditMenuAction {
             EditMenuAction::EditModTags(mod_model) => write!(f, "Edit tags for {}", mod_model.name),
             EditMenuAction::AddTag(_) => write!(f, "Add tag"),
             EditMenuAction::DeleteTag(_, tag_name, _) => write!(f, "Delete tag {}", tag_name),
+            EditMenuAction::BulkTag => write!(f, "Bulk tag mods"),
             EditMenuAction::Quit => write!(f, "Quit"),
         }
     }
@@ -57,6 +73,39 @@ impl<T> InterruptedDefault<T> for InquireResult<T> {
                 _ => self,
             },
         }
+    }
+}
+
+#[derive(Debug)]
+enum DBOrInquireError {
+    DB(DbErr),
+    Inquire(InquireError),
+}
+
+impl std::fmt::Display for DBOrInquireError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::DB(e) => std::fmt::Display::fmt(e, f),
+            Self::Inquire(e) => std::fmt::Display::fmt(e, f),
+        }
+    }
+}
+
+impl From<DbErr> for DBOrInquireError {
+    fn from(error: DbErr) -> Self {
+        DBOrInquireError::DB(error)
+    }
+}
+
+impl From<InquireError> for DBOrInquireError {
+    fn from(error: InquireError) -> Self {
+        DBOrInquireError::Inquire(error)
+    }
+}
+
+impl std::error::Error for DBOrInquireError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
     }
 }
 
@@ -87,6 +136,7 @@ pub async fn edit(
                     let options: Vec<EditMenuAction> = vec![
                         EditMenuAction::TagList,
                         EditMenuAction::AllModList,
+                        EditMenuAction::BulkTag,
                         EditMenuAction::Quit,
                     ];
                     current_state = Select::new("Main Menu:", options)
@@ -166,24 +216,16 @@ pub async fn edit(
                         .with_initial_value(&mod_model.name)
                         .with_default(&mod_model.name)
                         .with_validator(inquire::required!())
-                        .prompt();
-                    match new_name_result {
-                        Ok(new_name) => {
-                            let model_id = mod_model.id;
-                            let mut active_model = mod_model.into_active_model();
-                            active_model.name = ActiveValue::set(new_name.clone());
-                            active_model.updated = ActiveValue::set(chrono::offset::Local::now());
-                            active_model.save(&db).await?;
-                            current_state = EditMenuAction::EditMod(new_name, model_id);
-                        }
-                        Err(inquire_err) => match inquire_err {
-                            InquireError::OperationInterrupted
-                            | InquireError::OperationCanceled => {
-                                current_state =
-                                    EditMenuAction::EditMod(mod_model.name, mod_model.id);
-                            }
-                            _ => return Err(inquire_err.into()),
-                        },
+                        .prompt_skippable()?;
+                    if let Some(new_name) = new_name_result {
+                        let model_id = mod_model.id;
+                        let mut active_model = mod_model.into_active_model();
+                        active_model.name = ActiveValue::set(new_name.clone());
+                        active_model.updated = ActiveValue::set(chrono::offset::Local::now());
+                        active_model.save(&db).await?;
+                        current_state = EditMenuAction::EditMod(new_name, model_id);
+                    } else {
+                        current_state = EditMenuAction::EditMod(mod_model.name, mod_model.id)
                     }
                 }
                 EditMenuAction::EditModSource(mod_model) => {
@@ -233,32 +275,27 @@ pub async fn edit(
                         format!("Remove tag '{}' from {}?", tag_name, mod_name).as_str(),
                     )
                     .with_default(false)
-                    .prompt();
-                    match confirm_result {
-                        Ok(confirm) => {
-                            if confirm {
-                                let mut active_model = mod_model.clone().into_active_model();
-                                db.transaction::<_, (), DbErr>(|txn| {
-                                    Box::pin(async move {
-                                        mod_tag_relation::Entity::delete_by_id((mod_model.id, tag_id)).exec(txn).await?;
-                                        active_model.updated =
-                                            ActiveValue::set(chrono::offset::Local::now());
-                                        active_model.save(txn).await?;
-                                        super::util::cleanup_tags(txn).await?;
-                                        Ok(())
-                                    })
+                    .prompt_skippable()?;
+                    if let Some(confirm) = confirm_result {
+                        if confirm {
+                            let mut active_model = mod_model.clone().into_active_model();
+                            db.transaction::<_, (), DbErr>(|txn| {
+                                Box::pin(async move {
+                                    mod_tag_relation::Entity::delete_by_id((mod_model.id, tag_id))
+                                        .exec(txn)
+                                        .await?;
+                                    active_model.updated =
+                                        ActiveValue::set(chrono::offset::Local::now());
+                                    active_model.save(txn).await?;
+                                    super::util::cleanup_tags(txn).await?;
+                                    Ok(())
                                 })
-                                .await?;
-                            }
-                            current_state = EditMenuAction::EditModTags(mod_model);
+                            })
+                            .await?;
                         }
-                        Err(inquire_err) => match inquire_err {
-                            InquireError::OperationInterrupted
-                            | InquireError::OperationCanceled => {
-                                current_state = EditMenuAction::EditModTags(mod_model);
-                            }
-                            _ => return Err(inquire_err.into()),
-                        },
+                        current_state = EditMenuAction::EditModTags(mod_model);
+                    } else {
+                        current_state = EditMenuAction::EditModTags(mod_model);
                     }
                 }
                 EditMenuAction::AddTag(mod_model) => {
@@ -271,38 +308,139 @@ pub async fn edit(
                         .collect::<Vec<_>>();
                     let new_tag_result = Text::new("Enter tag:")
                         .with_validator(inquire::required!())
-                        .prompt();
-                    match new_tag_result {
-                        Ok(new_tag) => {
-                            if !existing_tags.contains(&new_tag) {
-                                let mut active_model = mod_model.clone().into_active_model();
-                                db.transaction::<_, (), DbErr>(|txn| {
-                                    Box::pin(async move {
-                                        let tag_id =
-                                            super::util::get_or_create_tag_id(txn, &new_tag)
-                                                .await?;
-                                        let relation_model = mod_tag_relation::ActiveModel {
-                                            mod_id: ActiveValue::set(mod_model.id),
+                        .with_autocomplete(super::util::TagAutoComplete::create(&db).await?)
+                        .prompt_skippable()?;
+                    if let Some(new_tag) = new_tag_result {
+                        if !existing_tags.contains(&new_tag) {
+                            let mut active_model = mod_model.clone().into_active_model();
+                            db.transaction::<_, (), DbErr>(|txn| {
+                                Box::pin(async move {
+                                    let tag_id =
+                                        super::util::get_or_create_tag_id(txn, &new_tag).await?;
+                                    let relation_model = mod_tag_relation::ActiveModel {
+                                        mod_id: ActiveValue::set(mod_model.id),
+                                        tag_id: ActiveValue::set(tag_id),
+                                    };
+                                    ModTagRelation::insert(relation_model).exec(txn).await?;
+                                    active_model.updated =
+                                        ActiveValue::set(chrono::offset::Local::now());
+                                    active_model.save(txn).await?;
+                                    Ok(())
+                                })
+                            })
+                            .await?;
+                        }
+                        current_state = EditMenuAction::EditModTags(mod_model);
+                    } else {
+                        current_state = EditMenuAction::EditModTags(mod_model);
+                    }
+                }
+                EditMenuAction::BulkTag => {
+                    let tag_result = Text::new("Enter a tag:")
+                        .with_validator(inquire::required!())
+                        .with_autocomplete(super::util::TagAutoComplete::create(&db).await?)
+                        .prompt_skippable()?;
+                    if let Some(bulk_tag) = tag_result {
+                        db.transaction::<_, (), DBOrInquireError>(|txn| {
+                            Box::pin(async move {
+                                let tag_id =
+                                    super::util::get_or_create_tag_id(txn, &bulk_tag).await?;
+                                let tag_mods = Tag::find_by_id(tag_id)
+                                    .find_with_related(SimsMod)
+                                    .all(txn)
+                                    .await?
+                                    .pop()
+                                    .map(|(_, mods)| mods)
+                                    .expect_or_log(
+                                        format!("Failed to get existing mods for tag {}", bulk_tag)
+                                            .as_str(),
+                                    )
+                                    .drain(..)
+                                    .map(|m| m.id)
+                                    .collect::<HashSet<_>>();
+
+                                let all_mods = SimsMod::find().all(txn).await?;
+
+                                let mod_options = all_mods
+                                    .iter()
+                                    .map(|m| BulkTagSelection {
+                                        name: &m.name,
+                                        id: m.id,
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                let tagged_mod_indexes = mod_options
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(idx, m)| {
+                                        if tag_mods.contains(&m.id) {
+                                            Some(idx)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<usize>>();
+                                let current_tagged_mod_set_indexes =
+                                    HashSet::<&usize>::from_iter(tagged_mod_indexes.iter());
+
+                                let formatter: inquire::formatter::MultiOptionFormatter<
+                                    '_,
+                                    BulkTagSelection,
+                                > = &|a| {
+                                    let new_tagged_mod_set =
+                                        HashSet::<&usize>::from_iter(a.iter().map(|o| &o.index));
+                                    let added_tags = new_tagged_mod_set
+                                        .difference(&current_tagged_mod_set_indexes)
+                                        .count();
+                                    let removed_tags = current_tagged_mod_set_indexes
+                                        .difference(&new_tagged_mod_set)
+                                        .count();
+                                    format!(
+                                        "Tagged {} mods, untagged {} mods",
+                                        added_tags, removed_tags
+                                    )
+                                };
+
+                                let selection_result = MultiSelect::new(
+                                    format!("Select mods to tag {}:", bulk_tag).as_str(),
+                                    mod_options,
+                                )
+                                .with_formatter(formatter)
+                                .with_default(&tagged_mod_indexes)
+                                .prompt_skippable()?;
+                                if let Some(selection) = selection_result {
+                                    let selected_mod_ids =
+                                        selection.iter().map(|bts| bts.id).collect::<HashSet<_>>();
+                                    for mid in selected_mod_ids.difference(&tag_mods) {
+                                        let new_model = mod_tag_relation::ActiveModel {
+                                            mod_id: ActiveValue::set(*mid),
                                             tag_id: ActiveValue::set(tag_id),
                                         };
-                                        ModTagRelation::insert(relation_model).exec(txn).await?;
-                                        active_model.updated =
-                                            ActiveValue::set(chrono::offset::Local::now());
-                                        active_model.save(txn).await?;
-                                        Ok(())
-                                    })
-                                })
-                                .await?;
-                            }
-                            current_state = EditMenuAction::EditModTags(mod_model);
-                        }
-                        Err(inquire_err) => match inquire_err {
-                            InquireError::OperationInterrupted
-                            | InquireError::OperationCanceled => {
-                                current_state = EditMenuAction::EditModTags(mod_model);
-                            }
-                            _ => return Err(inquire_err.into()),
-                        },
+                                        ModTagRelation::insert(new_model).exec(txn).await?;
+                                    }
+                                    ModTagRelation::delete_many()
+                                        .filter(
+                                            Condition::all()
+                                                .add(mod_tag_relation::Column::TagId.eq(tag_id))
+                                                .add(tag_mods.difference(&selected_mod_ids).fold(
+                                                    Condition::any(),
+                                                    |c, i| {
+                                                        c.add(
+                                                            mod_tag_relation::Column::ModId.eq(*i),
+                                                        )
+                                                    },
+                                                )),
+                                        )
+                                        .exec(txn)
+                                        .await?;
+                                }
+                                super::util::cleanup_tags(txn).await?;
+                                Ok(())
+                            })
+                        })
+                        .await?;
+                    } else {
+                        current_state = EditMenuAction::MainMenu;
                     }
                 }
                 EditMenuAction::Quit => {
