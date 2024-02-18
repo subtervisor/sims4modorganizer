@@ -229,9 +229,14 @@ async fn update_mod_from_scan(
     Ok(())
 }
 
-pub async fn scan(verify: bool, fix: bool, hash_update: bool) -> CrateResult<()> {
+pub async fn scan(
+    db: Option<DatabaseConnection>,
+    verify: bool,
+    fix: bool,
+    hash_update: bool,
+) -> CrateResult<()> {
     debug!("Scanning mods");
-    let db = crate::util::open_database().await?;
+    let db = db.unwrap_or(crate::util::open_database().await?);
 
     let mods = SimsMod::find().all(&db).await?;
 

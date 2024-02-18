@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
                 eprintln!("Interactive fix and hash sync are mutually exclusive.");
                 std::process::exit(1);
             }
-            commands::scan(verify, fix, sync_hashes).await
+            commands::scan(None, verify, fix, sync_hashes).await
         }
         Command::Tags { delete, tags } => {
             if delete.is_some() && tags.is_some() {

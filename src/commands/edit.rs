@@ -479,11 +479,11 @@ pub async fn edit(
                     }
                 }
                 EditMenuAction::ScanNoVerify => {
-                    super::scan(false, true, false).await?;
+                    super::scan(Some(db.clone()), false, true, false).await?;
                     current_state = EditMenuAction::MainMenu;
                 }
                 EditMenuAction::ScanVerify => {
-                    super::scan(true, true, false).await?;
+                    super::scan(Some(db.clone()), true, true, false).await?;
                     current_state = EditMenuAction::MainMenu;
                 }
                 EditMenuAction::Quit => {
