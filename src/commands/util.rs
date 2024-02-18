@@ -69,7 +69,7 @@ pub fn get_file_hashes(
             let mod_file_data = std::fs::read(mod_file_path)?;
             Ok((
                 file_path.clone(),
-                format!("{:#10x}", xxh3_64(&mod_file_data)),
+                format!("{:10X}", xxh3_64(&mod_file_data)),
             ))
         })
         .collect::<Result<_, _>>()?;
