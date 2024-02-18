@@ -89,6 +89,8 @@ pub enum Command {
         #[arg(short = 'v', long)]
         mod_version: Option<String>,
     },
+    // Open the Sims 4 mod directory in a file explorer
+    OpenModDir,
 }
 
 #[tokio::main]
@@ -147,5 +149,6 @@ async fn main() -> Result<()> {
             }
             commands::edit(interactive, mod_id, name, source_url, tags, mod_version).await
         }
+        Command::OpenModDir => opener::open(util::get_sims_mod_dir()?).map_err(|e| e.into()),
     }
 }

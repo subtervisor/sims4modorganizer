@@ -26,6 +26,7 @@ boxy = "0.1.0"
 tracing-unwrap = "0.10"
 itertools = "0.12.1"
 radix_trie = "0.2.1"
+opener = "0.6.1"
 
 [dependencies.xxhash-rust]
 version = "0.8.5"
