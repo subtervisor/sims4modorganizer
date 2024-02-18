@@ -334,6 +334,15 @@ impl TagAutoComplete {
                 .collect::<radix_trie::Trie<String, ()>>(),
         });
     }
+
+    pub fn remove_tag(&mut self, item: &str) {
+        self.tag_trie.remove(item);
+    }
+
+    #[allow(dead_code)]
+    pub fn add_tag(&mut self, item: String) {
+        self.tag_trie.insert(item, ());
+    }
 }
 
 impl inquire::Autocomplete for TagAutoComplete {

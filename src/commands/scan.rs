@@ -88,14 +88,23 @@ async fn add_mod(db: &DatabaseConnection, path: &PathBuf) -> CrateResult<()> {
         .with_default(&now.format("%d%m%y").to_string())
         .prompt()?;
 
-    let mut tags: Vec<String> = Text::new("Tags (comma separated):")
-        .with_placeholder("Body, Patreon")
-        .prompt()?
-        .split(",")
-        .map(|s| s.trim().to_string())
-        .collect::<HashSet<_>>()
-        .drain()
-        .collect();
+    let mut tags = {
+        let mut tags = Vec::new();
+        let mut autocomplete = super::util::TagAutoComplete::create(db).await?;
+        while let Some(tag) = Text::new("Add tag:")
+            .with_autocomplete(autocomplete.clone())
+            .with_help_message("Submit an empty tag or press ESC when done")
+            .prompt_skippable()?
+            .map(|s| s.trim().to_string())
+        {
+            if tag.is_empty() {
+                break;
+            }
+            autocomplete.remove_tag(&tag);
+            tags.push(tag);
+        }
+        tags
+    };
 
     debug!("Fetching file hashes");
     let (_, mut hashes) = crate::commands::util::get_file_hashes(&path)?;

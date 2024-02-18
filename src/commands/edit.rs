@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use inquire::error::InquireResult;
 use inquire::{Confirm, InquireError, MultiSelect, Select, Text};
 use sea_orm::{prelude::*, ActiveValue, Condition, IntoActiveModel, QuerySelect, TransactionTrait};
+use tracing::debug;
 use tracing_unwrap::OptionExt;
 
 use crate::entities::sims_mod::Model as SimsModModel;
@@ -23,6 +24,8 @@ enum EditMenuAction {
     AddTag(SimsModModel),
     DeleteTag(SimsModModel, String, i32),
     BulkTag,
+    ScanNoVerify,
+    ScanVerify,
     Quit,
 }
 
@@ -55,6 +58,8 @@ impl std::fmt::Display for EditMenuAction {
             EditMenuAction::AddTag(_) => write!(f, "Add tag"),
             EditMenuAction::DeleteTag(_, tag_name, _) => write!(f, "Delete tag {}", tag_name),
             EditMenuAction::BulkTag => write!(f, "Bulk tag mods"),
+            EditMenuAction::ScanNoVerify => write!(f, "Scan for new/deleted mods"),
+            EditMenuAction::ScanVerify => write!(f, "Scan for new/deleted/updated mods"),
             EditMenuAction::Quit => write!(f, "Quit"),
         }
     }
@@ -128,15 +133,22 @@ pub async fn edit(
             eprintln!("Interactive mode is not compatible with other arguments");
             return Err(std::io::Error::from(std::io::ErrorKind::Unsupported).into());
         }
+        debug!("Entering interactive menu mode");
         let mut current_state = EditMenuAction::MainMenu;
         let mut previous_menu_state = EditMenuAction::AllModList;
         while current_state != EditMenuAction::Quit {
+            debug!(
+                "Menu state: current = {}, previous = {}",
+                current_state, previous_menu_state
+            );
             match current_state {
                 EditMenuAction::MainMenu => {
                     let options: Vec<EditMenuAction> = vec![
                         EditMenuAction::TagList,
                         EditMenuAction::AllModList,
                         EditMenuAction::BulkTag,
+                        EditMenuAction::ScanNoVerify,
+                        EditMenuAction::ScanVerify,
                         EditMenuAction::Quit,
                     ];
                     current_state = Select::new("Main Menu:", options)
@@ -174,10 +186,17 @@ pub async fn edit(
                         .drain(..)
                         .map(|m| EditMenuAction::EditMod(m.name, m.id))
                         .collect();
-                    current_state =
-                        Select::new(format!("Mods for tag {}:", tag_name).as_str(), menu_entries)
-                            .prompt()
-                            .with_interrupted_default(EditMenuAction::TagList)?;
+                    if menu_entries.is_empty() {
+                        eprintln!("There are no mods tagged {}!", tag_name);
+                        current_state = EditMenuAction::TagList;
+                    } else {
+                        current_state = Select::new(
+                            format!("Mods for tag {}:", tag_name).as_str(),
+                            menu_entries,
+                        )
+                        .prompt()
+                        .with_interrupted_default(EditMenuAction::TagList)?;
+                    }
                 }
                 EditMenuAction::AllModList => {
                     let mod_list_options: Vec<EditMenuAction> = SimsMod::find()
@@ -190,10 +209,15 @@ pub async fn edit(
                         .drain(..)
                         .map(|(mod_name, mod_id)| EditMenuAction::EditMod(mod_name, mod_id))
                         .collect();
-                    current_state = Select::new("All Mods:", mod_list_options)
-                        .prompt()
-                        .with_interrupted_default(EditMenuAction::MainMenu)?;
-                    previous_menu_state = EditMenuAction::AllModList;
+                    if mod_list_options.is_empty() {
+                        eprintln!("There are no mods in the database!");
+                        current_state = EditMenuAction::MainMenu;
+                    } else {
+                        current_state = Select::new("All Mods:", mod_list_options)
+                            .prompt()
+                            .with_interrupted_default(EditMenuAction::MainMenu)?;
+                        previous_menu_state = EditMenuAction::AllModList;
+                    }
                 }
                 EditMenuAction::EditMod(mod_name, mod_id) => {
                     let mod_model = SimsMod::find_by_id(mod_id)
@@ -342,6 +366,11 @@ pub async fn edit(
                     }
                 }
                 EditMenuAction::BulkTag => {
+                    if SimsMod::find().limit(1).one(&db).await?.is_none() {
+                        eprintln!("No mods in database to tag!");
+                        current_state = EditMenuAction::MainMenu;
+                        continue;
+                    }
                     let tag_result = Text::new("Enter a tag:")
                         .with_validator(inquire::required!())
                         .with_autocomplete(super::util::TagAutoComplete::create(&db).await?)
@@ -448,6 +477,14 @@ pub async fn edit(
                     } else {
                         current_state = EditMenuAction::MainMenu;
                     }
+                }
+                EditMenuAction::ScanNoVerify => {
+                    super::scan(false, true, false).await?;
+                    current_state = EditMenuAction::MainMenu;
+                }
+                EditMenuAction::ScanVerify => {
+                    super::scan(true, true, false).await?;
+                    current_state = EditMenuAction::MainMenu;
                 }
                 EditMenuAction::Quit => {
                     println!("Exiting...");
