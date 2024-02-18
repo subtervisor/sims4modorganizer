@@ -312,6 +312,28 @@ impl TagAutoComplete {
                 .collect::<radix_trie::Trie<String, ()>>(),
         });
     }
+
+    pub async fn create_with_exclusions<C>(
+        db: &C,
+        exclusions: &Vec<String>,
+    ) -> Result<TagAutoComplete, DbErr>
+    where
+        C: sea_orm::ConnectionTrait,
+    {
+        return Ok(TagAutoComplete {
+            tag_trie: Tag::find()
+                .filter(
+                    exclusions
+                        .iter()
+                        .fold(Condition::all(), |c, e| c.add(tag::Column::Tag.eq(e))),
+                )
+                .all(db)
+                .await?
+                .drain(..)
+                .map(|m| (m.tag, ()))
+                .collect::<radix_trie::Trie<String, ()>>(),
+        });
+    }
 }
 
 impl inquire::Autocomplete for TagAutoComplete {

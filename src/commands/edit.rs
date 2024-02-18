@@ -308,7 +308,13 @@ pub async fn edit(
                         .collect::<Vec<_>>();
                     let new_tag_result = Text::new("Enter tag:")
                         .with_validator(inquire::required!())
-                        .with_autocomplete(super::util::TagAutoComplete::create(&db).await?)
+                        .with_autocomplete(
+                            super::util::TagAutoComplete::create_with_exclusions(
+                                &db,
+                                &existing_tags,
+                            )
+                            .await?,
+                        )
                         .prompt_skippable()?;
                     if let Some(new_tag) = new_tag_result {
                         if !existing_tags.contains(&new_tag) {
